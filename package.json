@@ -1,6 +1,6 @@
 {
-  "name": "@aurigami/contracts",
-  "version": "2.6.0",
+  "name": "@aurigami/smart-contracts",
+  "version": "1.0.0",
   "description": "Aurigami Finance Contracts",
   "main": "hardhat.config.ts",
   "files": [
@@ -22,14 +22,14 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aurigami-finance/mainRepo.git"
+    "url": "git+https://github.com/aurigami-finance/aurigami-smart-contracts.git"
   },
   "author": "",
   "license": "AGPL-3.0",
   "bugs": {
-    "url": "https://github.com/aurigami-finance/mainRepo/issues"
+    "url": "https://github.com/aurigami-finance/aurigami-smart-contracts/issues"
   },
-  "homepage": "https://github.com/aurigami-finance/mainRepo#readme",
+  "homepage": "https://github.com/aurigami-finance/aurigami-smart-contracts#readme",
   "dependencies": {
     "hardhat": "^2.9.3"
   },

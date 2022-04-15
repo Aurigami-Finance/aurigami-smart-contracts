@@ -5,9 +5,9 @@ __metadata:
   version: 5
   cacheKey: 8
 
-"@aurigami/contracts@workspace:.":
+"@aurigami/smart-contracts@workspace:.":
   version: 0.0.0-use.local
-  resolution: "@aurigami/contracts@workspace:."
+  resolution: "@aurigami/smart-contracts@workspace:."
   dependencies:
     "@nomiclabs/hardhat-ethers": ^2.0.3
     "@nomiclabs/hardhat-etherscan": 2.1.7
