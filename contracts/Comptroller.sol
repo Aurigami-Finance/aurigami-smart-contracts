@@ -5,7 +5,6 @@ import "./interfaces/PriceOracle.sol";
 import "./interfaces/ComptrollerInterface.sol";
 import "./ComptrollerStorage.sol";
 import "./Unitroller.sol";
-import "./governance/Ply.sol";
 
 /**
  * @title Aurigami Finance's Comptroller Contract
@@ -1010,8 +1009,8 @@ contract Comptroller is ComptrollerVXStorage, ComptrollerInterface, ExponentialN
      * @notice Claim all the PLY accrued by holder in all markets
      * @param holder The address to claim PLY for
      */
-    function claimReward(uint8 rewardType, address holder) public {
-        claimReward(rewardType, holder, allMarkets);
+    function claimReward(uint8 rewardType, address holder) external {
+        _claimRewardForOne(rewardType, holder, allMarkets, true, true);
     }
 
     /**
@@ -1019,10 +1018,8 @@ contract Comptroller is ComptrollerVXStorage, ComptrollerInterface, ExponentialN
      * @param holder The address to claim PLY for
      * @param auTokens The list of markets to claim PLY in
      */
-    function claimReward(uint8 rewardType, address holder, AuToken[] memory auTokens) public {
-        address[] memory holders = new address[](1);
-        holders[0] = holder;
-        claimReward(rewardType, holders, auTokens, true, true);
+    function claimReward(uint8 rewardType, address holder, AuToken[] memory auTokens) external {
+        _claimRewardForOne(rewardType, holder, auTokens, true, true);
     }
 
     /**
@@ -1033,61 +1030,68 @@ contract Comptroller is ComptrollerVXStorage, ComptrollerInterface, ExponentialN
      * @param borrowers Whether or not to claim PLY / AURORA earned by borrowing
      * @param suppliers Whether or not to claim PLY / AURORA earned by supplying
      */
-    function claimReward(uint8 rewardType, address[] memory holders, AuToken[] memory auTokens, bool borrowers, bool suppliers) public {
+    function claimReward(uint8 rewardType, address[] memory holders, AuToken[] memory auTokens, bool borrowers, bool suppliers) external {
+        for(uint256 i = 0; i < holders.length; i++) {
+            _claimRewardForOne(rewardType, holders[i], auTokens, borrowers, suppliers);
+        }
+    }
+
+    /**
+     * @notice Claim all PLY or AURORA accrued by one holder
+     * @notice Only whitelisted address can claim the rewards for other users. This is to prevent users to lock others' reward into token lock.
+     * @param rewardType  0: Ply, 1: Aurora
+     * @param holder The address to claim PLY / AURORA for
+     * @param auTokens The list of markets to claim PLY / AURORA in
+     * @param borrowers Whether or not to claim PLY / AURORA earned by borrowing
+     * @param suppliers Whether or not to claim PLY / AURORA earned by supplying
+     */
+    function _claimRewardForOne(uint8 rewardType, address holder, AuToken[] memory auTokens, bool borrowers, bool suppliers) internal {
         checkRewardType(rewardType);
+        require(borrowers||suppliers,"either borrow or supply must be true");
+        require(isAllowedToClaimReward(holder, msg.sender), "not approved");
+
         for (uint i = 0; i < auTokens.length; i++) {
             AuToken auToken = auTokens[i];
             require(markets[address(auToken)].isListed, "market must be listed");
             if (borrowers) {
                 Exp borrowIndex = Exp.wrap(auToken.borrowIndex());
-                updateRewardBorrowIndex(rewardType,address(auToken), borrowIndex, auToken.totalBorrows());
-                for (uint j = 0; j < holders.length; j++) {
-                    distributeBorrowerReward(rewardType,address(auToken), holders[j], borrowIndex, auToken.borrowBalanceStored(holders[j]));
-                    rewardAccrued[rewardType][holders[j]] = grantRewardInternal(rewardType, holders[j], rewardAccrued[rewardType][holders[j]]);
-                }
+                (uint totalBorrows, uint borrowBalanceStored) = auToken.getBorrowDataOfAccount(holder);
+                updateRewardBorrowIndex(rewardType, address(auToken), borrowIndex, totalBorrows);
+                distributeBorrowerReward(rewardType, address(auToken), holder, borrowIndex, borrowBalanceStored);
             }
             if (suppliers) {
-                updateRewardSupplyIndex(rewardType,address(auToken), auToken.totalSupply());
-                for (uint j = 0; j < holders.length; j++) {
-                    distributeSupplierReward(rewardType,address(auToken), holders[j], auToken.balanceOf(holders[j]));
-                    rewardAccrued[rewardType][holders[j]] = grantRewardInternal(rewardType, holders[j], rewardAccrued[rewardType][holders[j]]);
-                }
+                (uint totalSupply, uint auTokenBalance) = auToken.getSupplyDataOfOneAccount(holder);
+                updateRewardSupplyIndex(rewardType, address(auToken), totalSupply);
+                distributeSupplierReward(rewardType, address(auToken), holder, auTokenBalance);
             }
         }
+
+        uint256 holderReward = rewardAccrued[rewardType][holder];
+        rewardAccrued[rewardType][holder] = 0;
+
+        doTransferOutRewards(rewardType, holder, holderReward);
     }
 
+
     /**
-     * @notice Only whitelisted address can claim the rewards for other users. This is to prevent users to lock others' reward into token lock.
      * @notice Transfer PLY/AURORA to the user
-     * @dev Note: If there is not enough PLY/AURORA, we do not perform the transfer all.
-     * @param user The address of the user to transfer AURORA to
-     * @param amount The amount of AURORA to (possibly) transfer
+     * @dev Note: If there is not enough PLY/AURORA, we will revert
+     * @param user The address of the user to transfer PLY/AURORA to
      */
-    function grantRewardInternal(uint rewardType, address user, uint amount) internal returns (uint) {
-        // instead of reverting, return amount to store in rewardAccrued mapping
-        // this is so that we can use eth_call to fetch accrued rewards via the lens contract
-        require(isAllowedToClaimReward(user, msg.sender), "not approved");
+    function doTransferOutRewards(uint rewardType, address user, uint amount) internal {
+        if (amount == 0) return;
+
         if (rewardType == 0) {
-            if (block.timestamp < rewardClaimStart) return amount;
-            uint plyRemaining = ply.balanceOf(address(this));
-            if (amount > 0 && amount <= plyRemaining) {
-                // calculate lock and claim amounts
-                (uint256 lockAmount, uint256 claimAmount) = pulp.calcLockAmount(user, amount);
-                if (lockAmount > 0) {
-                    ply.approve(address(pulp), lockAmount);
-                    pulp.lockPly(user, lockAmount);
-                }
-                if (claimAmount > 0) ply.transfer(user, claimAmount);
-                return 0;
+            // calculate lock and claim amounts
+            (uint256 lockAmount, uint256 claimAmount) = pulp.calcLockAmount(user, amount);
+            if (lockAmount > 0) {
+                ply.approve(address(pulp), lockAmount);
+                pulp.lockPly(user, lockAmount);
             }
+            if (claimAmount > 0) ply.transfer(user, claimAmount);
         } else if (rewardType == 1) {
-            uint auroraRemaining = aurora.balanceOf(address(this));
-            if (amount > 0 && amount <= auroraRemaining) {
-                aurora.transfer(user, amount);
-                return 0;
-            }
+            aurora.transfer(user, amount);
         }
-        return amount;
     }
 
     /*** PLY Distribution Admin ***/
@@ -1100,8 +1104,7 @@ contract Comptroller is ComptrollerVXStorage, ComptrollerInterface, ExponentialN
      */
     function _grantPly(address recipient, uint amount) public {
         adminOrInitializing();
-        uint amountLeft = grantRewardInternal(0, recipient, amount);
-        require(amountLeft == 0, "insufficient PLY");
+        doTransferOutRewards(0, recipient, amount);
         emit PlyGranted(recipient, amount);
     }
 

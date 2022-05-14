@@ -32,7 +32,7 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
   // Info of each user.
   struct UserInfo {
     uint256 amount; // How many Staking tokens the user has provided.
-    UserRewardData userRewardData;
+    mapping(uint256 => UserRewardData) userRewardData;
     //
     // Basically, any point in time, the amount of reward token
     // entitled to a user but is pending to be distributed is:
@@ -65,7 +65,7 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
     uint32 startTime;
     uint32 endTime;
     uint32 lastRewardTimestamp;
-    PoolRewardData poolRewardData;
+    mapping(uint256 => PoolRewardData) poolRewardData;
   }
 
   // check if a pool exists for a stakeToken
@@ -73,6 +73,7 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
   // contract for locking reward
   PULPInterface public immutable pulp;
   IERC20 public immutable ply;
+  address[] public rewardTokens;
 
   // comptroller to determine who can harvest
   ComptrollerInterface public immutable unitroller;
@@ -83,46 +84,12 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
   // Info of each user that stakes Staking tokens.
   mapping(uint256 => mapping(address => UserInfo)) internal userInfo;
 
-  event AddNewPool(
-    address indexed stakeToken,
-    uint32 indexed startTime,
-    uint32 indexed endTime,
-    uint256 rewardPerSecond
-  );
-  event RenewPool(
-    uint256 indexed pid,
-    uint32 indexed startTime,
-    uint32 indexed endTime,
-    uint256 rewardPerSecond
-  );
-  event UpdatePool(uint256 indexed pid, uint32 indexed endTime, uint256 rewardPerSecond);
-  event Deposit(
-    address indexed user,
-    uint256 indexed pid,
-    uint256 indexed timestamp,
-    uint256 amount
-  );
-  event Withdraw(
-    address indexed user,
-    uint256 indexed pid,
-    uint256 indexed timestamp,
-    uint256 amount
-  );
-  event Harvest(
-    address indexed user,
-    uint256 indexed pid,
-    uint256 lockedAmount,
-    uint256 timestamp
-  );
-  event EmergencyWithdraw(
-    address indexed user,
-    uint256 indexed pid,
-    uint256 indexed timestamp,
-    uint256 amount
-  );
-  event RewardTokenWithdrawn(address indexed owner, uint256 amount);
-
-  constructor(PULPInterface _pulp, ComptrollerInterface _unitroller) BoringOwnable() {
+  constructor(
+    PULPInterface _pulp,
+    ComptrollerInterface _unitroller,
+    address[] memory _rewardTokens
+  ) BoringOwnable() {
+    rewardTokens = _rewardTokens;
     pulp = _pulp;
     ply = IERC20(pulp.PLY());
     unitroller = _unitroller;
@@ -130,14 +97,14 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
     ply.approve(address(pulp), type(uint256).max);
   }
 
-  receive() external payable {}
-
   /**
    * @dev Allow owner to withdraw only reward token
    */
-  function ownerWithdraw(uint256 amount) external onlyOwner {
-    ply.safeTransfer(msg.sender, amount);
-    emit RewardTokenWithdrawn(msg.sender, amount);
+  function ownerWithdraw(uint256 rewardTokenIndex, uint256 amount) external onlyOwner {
+    require(rewardTokenIndex < rewardTokens.length, "invalid index");
+    address rewardToken = rewardTokens[rewardTokenIndex];
+    IERC20(rewardToken).safeTransfer(msg.sender, amount);
+    emit RewardTokenWithdrawn(msg.sender, rewardToken, amount);
   }
 
   /**
@@ -145,16 +112,17 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
    * @param _stakeToken: token to be staked to the pool
    * @param _startTime: timestamp where the reward starts
    * @param _endTime: timestamp where the reward ends
-   * @param _rewardPerSecond: amount of reward token per second for the pool
+   * @param _rewardPerSeconds: amount of reward token per second for the pool for each reward token
    */
   function addPool(
     address _stakeToken,
     uint32 _startTime,
     uint32 _endTime,
-    uint256 _rewardPerSecond
-  ) external onlyOwner {
+    uint256[] calldata _rewardPerSeconds
+  ) external nonReentrant onlyOwner {
     require(!poolExists[_stakeToken], "add: duplicated pool");
     require(_stakeToken != address(0), "add: invalid stake token");
+    require(rewardTokens.length == _rewardPerSeconds.length, "add: invalid length");
 
     require(_startTime > block.timestamp && _endTime > _startTime, "add: invalid times");
 
@@ -162,16 +130,19 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
     poolInfo[poolLength].startTime = _startTime;
     poolInfo[poolLength].endTime = _endTime;
     poolInfo[poolLength].lastRewardTimestamp = _startTime;
-    poolInfo[poolLength].poolRewardData = PoolRewardData({
-      rewardPerSecond: _rewardPerSecond,
-      accRewardPerShare: 0
-    });
+
+    for (uint256 i = 0; i < _rewardPerSeconds.length; i++) {
+      poolInfo[poolLength].poolRewardData[i] = PoolRewardData({
+        rewardPerSecond: _rewardPerSeconds[i],
+        accRewardPerShare: 0
+      });
+    }
 
     poolLength++;
 
     poolExists[_stakeToken] = true;
 
-    emit AddNewPool(_stakeToken, _startTime, _endTime, _rewardPerSecond);
+    emit AddNewPool(_stakeToken, _startTime, _endTime, _rewardPerSeconds);
   }
 
   /**
@@ -179,16 +150,16 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
    * @param _pid: id of the pool to renew, must be pool that has not started or already ended
    * @param _startTime: timestamp where the reward starts
    * @param _endTime: timestamp where the reward ends
-   * @param _rewardPerSecond: amount of reward token per second for the pool
+   * @param _rewardPerSeconds: amount of reward token per second for the pool
    *   0 if we want to stop the pool from accumulating rewards
    */
   function renewPool(
     uint256 _pid,
     uint32 _startTime,
     uint32 _endTime,
-    uint256 _rewardPerSecond
-  ) external onlyOwner {
-    updatePoolRewards(_pid);
+    uint256[] calldata _rewardPerSeconds
+  ) external nonReentrant onlyOwner {
+    _updatePoolRewards(_pid);
 
     PoolInfo storage pool = poolInfo[_pid];
     // check if pool has not started or already ended
@@ -197,51 +168,58 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
       "renew: invalid pool state to renew"
     );
     // checking data of new pool
+    require(rewardTokens.length == _rewardPerSeconds.length, "renew: invalid length");
     require(_startTime > block.timestamp && _endTime > _startTime, "renew: invalid times");
 
     pool.startTime = _startTime;
     pool.endTime = _endTime;
     pool.lastRewardTimestamp = _startTime;
-    pool.poolRewardData.rewardPerSecond = _rewardPerSecond;
 
-    emit RenewPool(_pid, _startTime, _endTime, _rewardPerSecond);
+    for (uint256 i = 0; i < _rewardPerSeconds.length; i++) {
+      pool.poolRewardData[i].rewardPerSecond = _rewardPerSeconds[i];
+    }
+
+    emit RenewPool(_pid, _startTime, _endTime, _rewardPerSeconds);
   }
 
   /**
    * @dev Update a pool, allow to change end timestamp, reward per second
    * @param _pid: pool id to be renew
    * @param _endTime: timestamp where the reward ends
-   * @param _rewardPerSecond: amount of reward token per second for the pool,
+   * @param _rewardPerSeconds: amount of reward token per second for the pool,
    *   0 if we want to stop the pool from accumulating rewards
    */
   function updatePool(
     uint256 _pid,
     uint32 _endTime,
-    uint256 _rewardPerSecond
-  ) external onlyOwner {
-    updatePoolRewards(_pid);
+    uint256[] calldata _rewardPerSeconds
+  ) external nonReentrant onlyOwner {
+    _updatePoolRewards(_pid);
 
     PoolInfo storage pool = poolInfo[_pid];
 
     // should call renew pool if the pool has ended
     require(pool.endTime > block.timestamp, "update: pool already ended");
+    require(rewardTokens.length == _rewardPerSeconds.length, "update: invalid length");
     require(_endTime > block.timestamp && _endTime > pool.startTime, "update: invalid end time");
 
     pool.endTime = _endTime;
-    pool.poolRewardData.rewardPerSecond = _rewardPerSecond;
+    for (uint256 i = 0; i < _rewardPerSeconds.length; i++) {
+      pool.poolRewardData[i].rewardPerSecond = _rewardPerSeconds[i];
+    }
 
-    emit UpdatePool(_pid, _endTime, _rewardPerSecond);
+    emit UpdatePool(_pid, _endTime, _rewardPerSeconds);
   }
 
   /**
-   * @dev Deposit tokens to accumulate rewards
+   * @dev Deposit tokens to accumulate rewards without harvesting
    * @param _pid: id of the pool
    * @param _amount: amount of stakeToken to be deposited
    */
   function deposit(uint256 _pid, uint256 _amount) external nonReentrant {
     // update pool rewards, user's rewards
-    updatePoolRewards(_pid);
-    _updateUserReward(msg.sender, _pid, 0);
+    _updatePoolRewards(_pid);
+    _updateUserReward(msg.sender, _pid, false, 0);
 
     PoolInfo storage pool = poolInfo[_pid];
     UserInfo storage user = userInfo[_pid][msg.sender];
@@ -257,7 +235,7 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
   }
 
   /**
-   * @dev Withdraw token (of the sender) from pool
+   * @dev Withdraw token (of the sender) from pool without harvesting
    * @param _pid: id of the pool
    * @param _amount: amount of stakeToken to withdraw
    */
@@ -266,7 +244,7 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
   }
 
   /**
-   * @dev Withdraw all tokens (of the sender) from pool
+   * @dev Withdraw all tokens (of the sender) from pool without harvesting
    * @param _pid: id of the pool
    */
   function withdrawAll(uint256 _pid) external nonReentrant {
@@ -285,9 +263,12 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
     uint256 amount = user.amount;
 
     user.amount = 0;
-    UserRewardData storage rewardData = user.userRewardData;
-    rewardData.lastRewardPerShare = 0;
-    rewardData.unclaimedReward = 0;
+    uint256 rTokensLength = rewardTokens.length;
+    for (uint256 i = 0; i < rTokensLength; i++) {
+      UserRewardData storage rewardData = user.userRewardData[i];
+      rewardData.lastRewardPerShare = 0;
+      rewardData.unclaimedReward = 0;
+    }
 
     pool.totalStake = pool.totalStake - amount;
 
@@ -301,13 +282,13 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
   /**
    * @dev update rewards from multiple pools for the account
    */
-  function updateMultiplePools(address account, uint256[] calldata _pids) external {
+  function updateMultiplePools(address account, uint256[] calldata _pids) external nonReentrant {
     uint256 pid;
     for (uint256 i = 0; i < _pids.length; i++) {
       pid = _pids[i];
-      updatePoolRewards(pid);
+      _updatePoolRewards(pid);
       // update user reward without harvesting
-      _updateUserReward(account, pid, 0);
+      _updateUserReward(account, pid, false, 0);
     }
   }
 
@@ -319,24 +300,35 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
   function pendingRewards(uint256 _pid, address _user)
     external
     view
-    returns (uint256 pendingReward)
+    returns (uint256[] memory rewards)
   {
+    uint256 rTokensLength = rewardTokens.length;
+    rewards = new uint256[](rTokensLength);
     PoolInfo storage pool = poolInfo[_pid];
     UserInfo storage user = userInfo[_pid][_user];
     uint256 _totalStake = pool.totalStake;
     uint256 _poolLastRewardTimestamp = pool.lastRewardTimestamp;
     uint32 lastAccountedTime = _lastAccountedRewardTime(_pid);
 
-    uint256 _accRewardPerShare = pool.poolRewardData.accRewardPerShare;
-    if (lastAccountedTime > _poolLastRewardTimestamp && _totalStake != 0) {
-      uint256 reward = (lastAccountedTime - _poolLastRewardTimestamp) *
-        pool.poolRewardData.rewardPerSecond;
-      _accRewardPerShare = _accRewardPerShare + ((reward * PRECISION) / _totalStake);
+    for (uint256 i = 0; i < rTokensLength; i++) {
+      uint256 _accRewardPerShare = pool.poolRewardData[i].accRewardPerShare;
+      if (lastAccountedTime > _poolLastRewardTimestamp && _totalStake != 0) {
+        uint256 reward = (lastAccountedTime - _poolLastRewardTimestamp) *
+          pool.poolRewardData[i].rewardPerSecond;
+        _accRewardPerShare = _accRewardPerShare + ((reward * PRECISION) / _totalStake);
+      }
+      rewards[i] =
+        (user.amount * (_accRewardPerShare - user.userRewardData[i].lastRewardPerShare)) /
+        PRECISION;
+      rewards[i] += user.userRewardData[i].unclaimedReward;
     }
-    pendingReward =
-      (user.amount * (_accRewardPerShare - user.userRewardData.lastRewardPerShare)) /
-      PRECISION;
-    pendingReward += user.userRewardData.unclaimedReward;
+  }
+
+  /**
+   * @dev Return list reward tokens
+   */
+  function getRewardTokens() external view returns (address[] memory) {
+    return rewardTokens;
   }
 
   /**
@@ -351,8 +343,8 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
       uint32 startTime,
       uint32 endTime,
       uint32 lastRewardTimestamp,
-      uint256 rewardPerSecond,
-      uint256 accRewardPerShare
+      uint256[] memory rewardPerSeconds,
+      uint256[] memory accRewardPerShares
     )
   {
     PoolInfo storage pool = poolInfo[_pid];
@@ -363,8 +355,13 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
       pool.endTime,
       pool.lastRewardTimestamp
     );
-    rewardPerSecond = pool.poolRewardData.rewardPerSecond;
-    accRewardPerShare = pool.poolRewardData.accRewardPerShare;
+    uint256 rTokensLength = rewardTokens.length;
+    rewardPerSeconds = new uint256[](rTokensLength);
+    accRewardPerShares = new uint256[](rTokensLength);
+    for (uint256 i = 0; i < rTokensLength; i++) {
+      rewardPerSeconds[i] = pool.poolRewardData[i].rewardPerSecond;
+      accRewardPerShares[i] = pool.poolRewardData[i].accRewardPerShare;
+    }
   }
 
   /**
@@ -375,14 +372,19 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
     view
     returns (
       uint256 amount,
-      uint256 unclaimedReward,
-      uint256 lastRewardPerShare
+      uint256[] memory unclaimedRewards,
+      uint256[] memory lastRewardPerShares
     )
   {
     UserInfo storage user = userInfo[_pid][_account];
     amount = user.amount;
-    unclaimedReward = user.userRewardData.unclaimedReward;
-    lastRewardPerShare = user.userRewardData.lastRewardPerShare;
+    uint256 rTokensLength = rewardTokens.length;
+    unclaimedRewards = new uint256[](rTokensLength);
+    lastRewardPerShares = new uint256[](rTokensLength);
+    for (uint256 i = 0; i < rTokensLength; i++) {
+      unclaimedRewards[i] = user.userRewardData[i].unclaimedReward;
+      lastRewardPerShares[i] = user.userRewardData[i].lastRewardPerShare;
+    }
   }
 
   /**
@@ -390,36 +392,45 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
    */
   function updateAndGetUserInfo(uint256 _pid, address _account)
     external
+    nonReentrant
     returns (
       uint256 amount,
-      uint256 unclaimedReward,
-      uint256 lastRewardPerShare
+      uint256[] memory unclaimedRewards,
+      uint256[] memory lastRewardPerShares
     )
   {
-    updatePoolRewards(_pid);
-    _updateUserReward(_account, _pid, 0);
-    (amount, unclaimedReward, lastRewardPerShare) = getUserInfo(_pid, _account);
+    _updatePoolRewards(_pid);
+    _updateUserReward(_account, _pid, false, 0);
+    (amount, unclaimedRewards, lastRewardPerShares) = getUserInfo(_pid, _account);
   }
 
   /**
-   * @dev Harvest rewards from a pool for an account
+   * @dev Harvest rewards from a pool for an account. For all rewards that are not PLY, the entire amount will be
+   transferred out. For PLY, it will follow the weekly locking schedule specified in PULP
    * @param _pid: id of the pool
-   * @param _maxAmountToHarvest: the maximum amount to harvest from the pool
-   * @dev Note that only approved claimer can harvest & lock the rewards (check _lockReward function)
+   * @param _maxAmountOfPlyToHarvest: the maximum amount of Ply to harvest from the pool
+   * @dev Note that only approved claimer can harvest & lock the rewards (check _doTransferOutRewards function)
    */
   function harvest(
     address account,
     uint256 _pid,
-    uint256 _maxAmountToHarvest
-  ) external {
-    updatePoolRewards(_pid);
-    _updateUserReward(account, _pid, _maxAmountToHarvest);
+    uint256 _maxAmountOfPlyToHarvest
+  ) external nonReentrant {
+    _updatePoolRewards(_pid);
+    _updateUserReward(account, _pid, true, _maxAmountOfPlyToHarvest);
   }
 
   /**
    * @dev Update rewards for one pool
    */
-  function updatePoolRewards(uint256 _pid) public {
+  function updatePoolRewards(uint256 _pid) external nonReentrant {
+    _updatePoolRewards(_pid);
+  }
+
+  /**
+   * @dev Update rewards for one pool
+   */
+  function _updatePoolRewards(uint256 _pid) internal {
     require(_pid < poolLength, "invalid pool id");
     PoolInfo storage pool = poolInfo[_pid];
     uint32 lastAccountedTime = _lastAccountedRewardTime(_pid);
@@ -431,11 +442,15 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
     }
 
     uint256 secondsElapsed = lastAccountedTime - pool.lastRewardTimestamp;
-    PoolRewardData storage rewardData = pool.poolRewardData;
-    uint256 reward = secondsElapsed * rewardData.rewardPerSecond;
-    rewardData.accRewardPerShare =
-      rewardData.accRewardPerShare +
-      ((reward * PRECISION) / _totalStake);
+    uint256 rTokensLength = rewardTokens.length;
+    for (uint256 i = 0; i < rTokensLength; i++) {
+      PoolRewardData storage rewardData = pool.poolRewardData[i];
+      uint256 reward = secondsElapsed * rewardData.rewardPerSecond;
+      rewardData.accRewardPerShare =
+        rewardData.accRewardPerShare +
+        (reward * PRECISION) /
+        _totalStake;
+    }
     pool.lastRewardTimestamp = lastAccountedTime;
   }
 
@@ -448,8 +463,8 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
     require(user.amount >= _amount, "withdraw: insufficient amount");
 
     // update pool reward and harvest
-    updatePoolRewards(_pid);
-    _updateUserReward(msg.sender, _pid, 0);
+    _updatePoolRewards(_pid);
+    _updateUserReward(msg.sender, _pid, false, 0);
 
     user.amount = user.amount - _amount;
     pool.totalStake = pool.totalStake - _amount;
@@ -465,36 +480,45 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
   function _updateUserReward(
     address _to,
     uint256 _pid,
-    uint256 _maxAmountToHarvest
+    bool doHarvest,
+    uint256 _maxAmountOfPlyToHarvest
   ) internal {
     uint256 userAmount = userInfo[_pid][_to].amount;
+    uint256 rTokensLength = rewardTokens.length;
 
     if (userAmount == 0) {
       // update user last reward per share to the latest pool reward per share
       // by right if user.amount is 0, user.unclaimedReward should be 0 as well,
       // except when user uses emergencyWithdraw function
-      userInfo[_pid][_to].userRewardData.lastRewardPerShare = poolInfo[_pid]
-        .poolRewardData
-        .accRewardPerShare;
+      for (uint256 i = 0; i < rTokensLength; i++) {
+        userInfo[_pid][_to].userRewardData[i].lastRewardPerShare = poolInfo[_pid]
+          .poolRewardData[i]
+          .accRewardPerShare;
+      }
       return;
     }
 
-    uint256 lastAccRewardPerShare = poolInfo[_pid].poolRewardData.accRewardPerShare;
-    UserRewardData storage rewardData = userInfo[_pid][_to].userRewardData;
-    // user's unclaim reward + user's amount * (pool's accRewardPerShare - user's lastRewardPerShare) / precision
-    uint256 _pending = (userAmount * (lastAccRewardPerShare - rewardData.lastRewardPerShare)) /
-      PRECISION;
-    _pending = _pending + rewardData.unclaimedReward;
+    for (uint256 i = 0; i < rTokensLength; i++) {
+      uint256 lastAccRewardPerShare = poolInfo[_pid].poolRewardData[i].accRewardPerShare;
+      UserRewardData storage rewardData = userInfo[_pid][_to].userRewardData[i];
+      // user's unclaim reward + user's amount * (pool's accRewardPerShare - user's lastRewardPerShare) / precision
+      uint256 _pending = (userAmount * (lastAccRewardPerShare - rewardData.lastRewardPerShare)) /
+        PRECISION;
+      _pending = _pending + rewardData.unclaimedReward;
 
-    rewardData.unclaimedReward = _pending;
-    // update user last reward per share to the latest pool reward per share
-    rewardData.lastRewardPerShare = lastAccRewardPerShare;
+      rewardData.unclaimedReward = _pending;
+      // update user last reward per share to the latest pool reward per share
+      rewardData.lastRewardPerShare = lastAccRewardPerShare;
 
-    if (_maxAmountToHarvest > 0 && _pending > 0) {
-      uint256 harvestedAmount = Math.min(_maxAmountToHarvest, _pending);
-      rewardData.unclaimedReward -= harvestedAmount;
-      _lockReward(_to, harvestedAmount);
-      emit Harvest(_to, _pid, harvestedAmount, block.timestamp);
+      if (doHarvest && _pending > 0) {
+        uint256 harvestedAmount = _doTransferOutRewards(
+          rewardData,
+          IERC20(rewardTokens[i]),
+          _to,
+          _maxAmountOfPlyToHarvest
+        );
+        emit Harvest(_to, _pid, rewardTokens[i], harvestedAmount, block.timestamp);
+      }
     }
   }
 
@@ -506,11 +530,28 @@ contract AuriFairLaunch is ReentrancyGuard, BoringOwnable, AuriFairLaunchInterfa
     if (_value > block.timestamp) _value = block.timestamp.toUint32();
   }
 
-  /**
-   * @dev Call locker contract to lock rewards
-   */
-  function _lockReward(address _account, uint256 _amount) internal {
-    require(unitroller.isAllowedToClaimReward(_account, msg.sender), "not approved");
+  function _doTransferOutRewards(
+    UserRewardData storage rewardData,
+    IERC20 rewardToken,
+    address _account,
+    uint256 _maxAmountOfPlyToHarvest
+  ) internal returns (uint256 harvestedAmount) {
+    require(unitroller.isAllowedToClaimReward(_account, msg.sender), "not allowed to harvest");
+
+    if (rewardToken == ply) {
+      if (_maxAmountOfPlyToHarvest > 0) {
+        harvestedAmount = Math.min(_maxAmountOfPlyToHarvest, rewardData.unclaimedReward);
+        rewardData.unclaimedReward -= harvestedAmount;
+        _lockPly(_account, harvestedAmount);
+      }
+    } else {
+      harvestedAmount = rewardData.unclaimedReward;
+      rewardData.unclaimedReward -= harvestedAmount;
+      IERC20(rewardToken).safeTransfer(_account, harvestedAmount);
+    }
+  }
+
+  function _lockPly(address _account, uint256 _amount) internal {
     (uint256 lockAmount, uint256 claimAmount) = pulp.calcLockAmount(_account, _amount);
     if (lockAmount != 0) {
       pulp.lockPly(_account, lockAmount);

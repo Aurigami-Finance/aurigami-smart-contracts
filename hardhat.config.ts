@@ -24,7 +24,7 @@ const config: HardhatUserConfig = {
         settings: {
           optimizer: {
             enabled: true,
-            runs: 0,
+            runs: 3000,
           },
         }
       }
@@ -36,8 +36,7 @@ const config: HardhatUserConfig = {
       forking: {
         // url: `https://testnet.aurora.dev/${process.env.AURORA_API_KEY}`,
         url: `https://mainnet.aurora.dev/`,
-        // blockNumber: 60182767
-        // blockNumber: 83115443
+        // blockNumber: 65217137
       },
       accounts: [
         // 5 accounts with 10^14 ETH each

@@ -3,6 +3,10 @@ pragma solidity 0.8.11;
 import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 interface PULPInterface is IERC20Metadata {
+  function globalLock(uint256 _week) external view returns (uint256);
+
+  function userLock(address _user, uint256 _week) external view returns (bool, uint224);
+
   function PLY() external view returns (address);
 
   function lockPly(address recipient, uint256 amount) external;

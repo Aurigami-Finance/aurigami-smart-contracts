@@ -2,11 +2,16 @@ pragma solidity 0.8.11;
 
 import "./AuErc20.sol";
 import "./AuToken.sol";
-import "./interfaces/EIP20Interface.sol";
-import "./governance/Ply.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "./interfaces/PriceOracle.sol";
 import "./interfaces/PULPInterface.sol";
 import "./interfaces/AuriFairLaunchInterface.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/IERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/security/ReentrancyGuardUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/token/ERC20/utils/SafeERC20Upgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "./BoringOwnableUpgradeable.sol";
 
 interface ComptrollerLensInterface {
   function markets(address) external view returns (bool, uint256);
@@ -29,14 +34,14 @@ interface ComptrollerLensInterface {
 
   function borrowCaps(address) external view returns (uint256);
 
-  function ply() external view returns (EIP20Interface);
+  function ply() external view returns (IERC20);
 
-  function aurora() external view returns (EIP20Interface);
+  function aurora() external view returns (IERC20);
 
   function pulp() external view returns (PULPInterface);
 }
 
-contract AuriLens {
+contract AuriLens is Initializable, BoringOwnableUpgradeable, UUPSUpgradeable {
   struct AuTokenMetadata {
     address auToken;
     uint256 exchangeRateCurrent;
@@ -81,13 +86,9 @@ contract AuriLens {
   }
 
   struct RewardBalancesMetadata {
-    uint256 plyBalance;
-    uint256 auroraBalance;
-    uint256 plyAccrued;
-    uint256 auroraAccrued;
-    uint256[] amounts;
-    uint256[] unclaimedRewards;
-    uint256[] lastRewardsPerShare;
+    uint256 plyAccrured;
+    uint256 auroraClaimable;
+    uint256 wnearClaimable;
   }
 
   struct AccountLimits {
@@ -95,6 +96,18 @@ contract AuriLens {
     uint256 liquidity;
     uint256 shortfall;
   }
+
+  IERC20 public immutable WNEAR;
+
+  constructor(IERC20 _WNEAR) initializer {
+    WNEAR = _WNEAR;
+  }
+
+  function initialize() external initializer {
+    __BoringOwnable_init();
+  }
+
+  function _authorizeUpgrade(address) internal virtual override onlyOwner {}
 
   function getRewardSpeeds(ComptrollerLensInterface comptroller, AuToken auToken)
     public
@@ -113,12 +126,14 @@ contract AuriLens {
     returns (
       address ply,
       address aurora,
+      address wnear,
       address pulp
     )
   {
     ply = address(comptroller.ply());
     aurora = address(comptroller.aurora());
     pulp = address(comptroller.pulp());
+    wnear = address(WNEAR);
   }
 
   /**
@@ -138,7 +153,7 @@ contract AuriLens {
     } else {
       AuErc20 auErc20 = AuErc20(address(auToken));
       underlyingAssetAddress = auErc20.underlying();
-      underlyingDecimals = EIP20Interface(auErc20.underlying()).decimals();
+      underlyingDecimals = IERC20Metadata(auErc20.underlying()).decimals();
     }
     RewardSpeeds memory rewardSpeeds = getRewardSpeeds(comptroller, auToken);
 
@@ -197,7 +212,7 @@ contract AuriLens {
       tokenBalance = msg.sender.balance;
       tokenAllowance = msg.sender.balance;
     } else {
-      EIP20Interface underlying = EIP20Interface(AuErc20(address(auToken)).underlying());
+      IERC20 underlying = IERC20(AuErc20(address(auToken)).underlying());
       tokenBalance = underlying.balanceOf(msg.sender);
       tokenAllowance = underlying.allowance(msg.sender, address(auToken));
     }
@@ -271,71 +286,91 @@ contract AuriLens {
   }
 
   /**
-   * @dev only 2 claimReward are non-view functions
-   * @dev to be impersonated and callStatic by SDK
-   */
-  function claimAndGetRewardBalancesMetadata(
-    ComptrollerLensInterface comptroller,
-    AuriFairLaunchInterface auriFairLaunch,
-    uint256[] calldata pids
-  ) external returns (RewardBalancesMetadata memory rewardData) {
-    EIP20Interface ply = comptroller.ply();
-    EIP20Interface aurora = comptroller.aurora();
-    PULPInterface pulp = PULPInterface(comptroller.pulp());
-
-    rewardData.plyBalance = ply.balanceOf(msg.sender);
-    rewardData.auroraBalance = aurora.balanceOf(msg.sender);
-
-    // state-change
-    comptroller.claimReward(0, msg.sender);
-    // state-change
-    comptroller.claimReward(1, msg.sender);
-
-    // handle ply
-    uint256 newPlyBalance = ply.balanceOf(msg.sender);
-    uint256 plyReceivedFromComptroller = newPlyBalance - rewardData.plyBalance;
-    uint256 plyLocked = comptroller.rewardAccrued(0, msg.sender) +
-      pulp.balanceOf(msg.sender) -
-      pulp.getMaxAmountRedeemable(msg.sender);
-    rewardData.plyAccrued = plyLocked + plyReceivedFromComptroller;
-
-    // handle aurora
-    uint256 newAuroraBalance = aurora.balanceOf(msg.sender);
-    rewardData.auroraAccrued = newAuroraBalance - rewardData.auroraBalance;
-
-    // get rewards from fairlaunch
-    rewardData.amounts = new uint256[](pids.length);
-    rewardData.unclaimedRewards = new uint256[](pids.length);
-    rewardData.lastRewardsPerShare = new uint256[](pids.length);
-    for (uint256 i = 0; i < pids.length; i++) {
-      (
-        rewardData.amounts[i],
-        rewardData.unclaimedRewards[i],
-        rewardData.lastRewardsPerShare[i]
-      ) = auriFairLaunch.updateAndGetUserInfo(pids[i], msg.sender);
-    }
-  }
-
-  /**
-   * @dev comptroller.claimReward, fairlaunch.harvest & tokenLock.claim are non-view
+   * @dev comptroller.claimReward, fairlaunch.harvest & pulp.redeem are non-view
    * @dev to be impersonated and callStatic by SDK
    */
   function claimRewards(
     ComptrollerLensInterface comptroller,
     AuriFairLaunchInterface fairLaunch,
     uint256[] calldata pids
-  ) external {
-    // claim comp accrued rewards
+  ) external returns (RewardBalancesMetadata memory rewardData) {
+    /// ------------------------------------------------------------
+    /// set-up states
+    /// ------------------------------------------------------------
+
+    IERC20 ply = comptroller.ply();
+    IERC20 aurora = comptroller.aurora();
+    IERC20 wnear = WNEAR;
+    PULPInterface pulp = PULPInterface(comptroller.pulp());
+
+    uint256 plyBalance = ply.balanceOf(msg.sender);
+    uint256 pulpBalance = pulp.balanceOf(msg.sender);
+    uint256 auroraBalance = aurora.balanceOf(msg.sender);
+    uint256 wnearBalance = wnear.balanceOf(msg.sender);
+
+    /// ------------------------------------------------------------
+    /// claim rewards
+    /// ------------------------------------------------------------
+
     comptroller.claimReward(0, msg.sender);
     comptroller.claimReward(1, msg.sender);
-
-    // claim fairlaunch rewards
     for (uint256 i; i < pids.length; i++) {
       fairLaunch.harvest(msg.sender, pids[i], type(uint256).max);
     }
+
+    /// ------------------------------------------------------------
+    /// calc redeemed amounts
+    /// ------------------------------------------------------------
+
+    // only ply,aurora and wnear will be rewarded to users
+    rewardData.plyAccrured =
+      ply.balanceOf(msg.sender) -
+      plyBalance +
+      pulp.balanceOf(msg.sender) -
+      pulpBalance;
+    rewardData.auroraClaimable = aurora.balanceOf(msg.sender) - auroraBalance;
+    rewardData.wnearClaimable = wnear.balanceOf(msg.sender) - wnearBalance;
   }
 
   function compareStrings(string memory a, string memory b) internal pure returns (bool) {
     return (keccak256(abi.encodePacked((a))) == keccak256(abi.encodePacked((b))));
+  }
+
+  /**
+   * @dev Get percentage lock of a user in a specific week
+   */
+  function getPercentLock(
+    PULPInterface pulp,
+    address account,
+    int256 weekInt
+  ) public view returns (uint256 percentLock) {
+    if (weekInt < 0) return 10_000;
+
+    uint256 week = uint256(weekInt);
+
+    (bool _isSet, uint224 _percentLock) = pulp.userLock(account, week);
+    if (_isSet) {
+      percentLock = _percentLock;
+    } else {
+      percentLock = pulp.globalLock(week);
+    }
+  }
+
+  /**
+   * @dev Get the first week that the unlock percentage reach the target
+   * @dev This function is very gas intensive & is intended to be called by SDK
+   */
+  function getWeekToUnlock(
+    PULPInterface pulp,
+    address account,
+    uint256 targetUnlockPercent
+  ) external view returns (int256) {
+    uint256 targetLockPercent = 10_000 - targetUnlockPercent;
+    for (int256 i = 0; i <= 47; i++) {
+      if (getPercentLock(pulp, account, i) <= targetLockPercent) {
+        return i;
+      }
+    }
+    return 48;
   }
 }

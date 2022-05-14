@@ -56,8 +56,6 @@ typechain
 .vscode
 .idea
 
-# Temporarily ignore deployment.json before launch
-deployment.json
 reference
 .pnp.*
 .yarn/*
