@@ -1,7 +1,7 @@
 {
   "deployer": "0xb969526EBc8dd4b1d816Da846eE08180515fFBbC",
   "unitroller": "0x817af6cfAF35BdC1A634d6cC94eE9e4c68369Aeb",
-  "comptrollerImpl": "0x73c46FBd11759fd4Be5b6f0EaBC6308782d157fF",
+  "comptrollerImpl": "0xe2875442E260464f892a61e00aBF1738Ed5Ba318",
   "comptroller": "0x817af6cfAF35BdC1A634d6cC94eE9e4c68369Aeb",
   "PLY": "0x09c9d464b58d96837f8d8b6f4d9fe4ad408d3a4f",
   "jumpRateModel": "0x0Bc03bd8d4aF1e8bab2194860268F5774C9d400a",

@@ -66,8 +66,14 @@ contract Comptroller is ComptrollerVXStorage, ComptrollerInterface, ExponentialN
     /// @notice Emitted when borrow cap for a auToken is changed
     event NewBorrowCap(AuToken indexed auToken, uint newBorrowCap);
 
+    /// @notice Emitted when mint cap for a auToken is changed
+    event NewMintCap(AuToken indexed auToken, uint newMintCap);
+
     /// @notice Emitted when borrow cap guardian is changed
     event NewBorrowCapGuardian(address oldBorrowCapGuardian, address newBorrowCapGuardian);
+
+    /// @notice Emitted when mint cap guardian is changed
+    event NewMintCapGuardian(address oldMintCapGuardian, address newMintCapGuardian);
 
     /// @notice Emitted when PLY is granted by admin
     event PlyGranted(address recipient, uint amount);
@@ -229,12 +235,21 @@ contract Comptroller is ComptrollerVXStorage, ComptrollerInterface, ExponentialN
         // Pausing is a very serious situation - we revert to sound the alarms
         require(!mintGuardianPaused[auToken], "mint is paused");
 
-        // Shh - currently unused
-        mintAmount;
-
         if (!markets[auToken].isListed) {
             revert MarketNotListed();
         }
+
+        uint mintCap = mintCaps[auToken];
+        // Mint cap of 0 corresponds to unlimited minting
+        if (mintCap != 0) {
+            // exchangeRateStored is used to avoid reentrancy issue when using exchangeRateCurrent
+            // when this func is invoked by AuToken's mint, accrueInterest() would have been called
+            // => exchangeRateStored & exchangeRateCurrent should have the same value
+            uint totalMints = mul_ScalarTruncate(Exp.wrap(AuToken(auToken).exchangeRateStored()), AuToken(auToken).totalSupply());
+            uint nextTotalMints = totalMints + mintAmount;
+            require(nextTotalMints < mintCap, "market mint cap reached");
+        }
+
 
         updateAndDistributeSupplierRewardsForTokenForOne(auToken, minter);
     }
@@ -740,6 +755,26 @@ contract Comptroller is ComptrollerVXStorage, ComptrollerInterface, ExponentialN
     }
 
     /**
+      * @notice Set the given mint caps for the given auToken markets. Minting that brings total mints to or above mint cap will revert.
+      * @dev Admin or mintCapGuardian function to set the mint caps. A mint cap of 0 corresponds to unlimited minting.
+      * @param auTokens The addresses of the markets (tokens) to change the mint caps for
+      * @param newMintCaps The new mint cap values in underlying to be set. A value of 0 corresponds to unlimited minting.
+      */
+    function _setMarketMintCaps(AuToken[] calldata auTokens, uint[] calldata newMintCaps) external {
+    	require(msg.sender == admin || msg.sender == mintCapGuardian, "only admin or mint cap guardian");
+
+        uint numMarkets = auTokens.length;
+        uint numMintCaps = newMintCaps.length;
+
+        require(numMarkets != 0 && numMarkets == numMintCaps, "invalid input");
+
+        for(uint i = 0; i < numMarkets; i++) {
+            mintCaps[address(auTokens[i])] = newMintCaps[i];
+            emit NewMintCap(auTokens[i], newMintCaps[i]);
+        }
+    }
+
+    /**
      * @notice Admin function to change the Borrow Cap Guardian
      * @param newBorrowCapGuardian The address of the new Borrow Cap Guardian
      */
@@ -754,6 +789,23 @@ contract Comptroller is ComptrollerVXStorage, ComptrollerInterface, ExponentialN
 
         // Emit NewBorrowCapGuardian(OldBorrowCapGuardian, NewBorrowCapGuardian)
         emit NewBorrowCapGuardian(oldBorrowCapGuardian, newBorrowCapGuardian);
+    }
+
+    /**
+     * @notice Admin function to change the Mint Cap Guardian
+     * @param newMintCapGuardian The address of the new Mint Cap Guardian
+     */
+    function _setMintCapGuardian(address newMintCapGuardian) external {
+        require(msg.sender == admin, "only admin can set mint cap guardian");
+
+        // Save current value for inclusion in log
+        address oldMintCapGuardian = mintCapGuardian;
+
+        // Store mintCapGuardian with value newMintCapGuardian
+        mintCapGuardian = newMintCapGuardian;
+
+        // Emit NewMintCapGuardian(OldMintCapGuardian, NewMintCapGuardian)
+        emit NewMintCapGuardian(oldMintCapGuardian, newMintCapGuardian);
     }
 
     /**

@@ -8,6 +8,7 @@ import '@nomiclabs/hardhat-waffle';
 import 'hardhat-gas-reporter';
 import 'solidity-coverage';
 import 'hardhat-contract-sizer';
+import 'hardhat-storage-layout-diff';
 import 'solidity-coverage';
 import '@openzeppelin/hardhat-upgrades';
 

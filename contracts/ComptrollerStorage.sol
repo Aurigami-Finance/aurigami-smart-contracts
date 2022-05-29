@@ -144,4 +144,10 @@ contract ComptrollerVXStorage is UnitrollerAdminStorage, RewardsClaimInterface {
 
     /// @notice start timestamp for liquidity incentive claims
     uint32 public rewardClaimStart;
+
+    // @notice The mintCapGuardian can set mintCaps to any number for any market. Lowering the mint cap could disable minting on the given market.
+    address public mintCapGuardian;
+
+    // @notice Mint caps enforced by mintAllowed for each AuToken address. Defaults to zero which corresponds to unlimited mints.
+    mapping(address => uint) public mintCaps;
 }
