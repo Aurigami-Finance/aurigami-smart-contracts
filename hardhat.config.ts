@@ -37,7 +37,7 @@ const config: HardhatUserConfig = {
       forking: {
         // url: `https://testnet.aurora.dev/${process.env.AURORA_API_KEY}`,
         url: `https://mainnet.aurora.dev/`,
-        // blockNumber: 65217137
+        //blockNumber: 65217137
       },
       accounts: [
         // 5 accounts with 10^14 ETH each
@@ -71,18 +71,19 @@ const config: HardhatUserConfig = {
       allowUnlimitedContractSize: true,
       blockGasLimit: 800000000000000,
       gas: 80000000,
+      gasPrice: 1000000000,
       loggingEnabled: false,
     },
     aurora_testnet: {
       chainId: 1313161555,
       url: `https://testnet.aurora.dev/`,
-      accounts: [process.env.PRIVATE_KEY, process.env.PRIVATE_KEY_JERRY],
+      accounts: [process.env.PRIVATE_KEY],
       timeout: 500000
     },
     aurora: {
       chainId: 1313161554,
       url: `https://mainnet.aurora.dev/${process.env.AURORA_API_KEY}`,
-      accounts: [process.env.PRIVATE_KEY, process.env.PRIVATE_KEY_JERRY],
+      accounts: [process.env.PRIVATE_KEY],
       timeout: 500000
     }
   },

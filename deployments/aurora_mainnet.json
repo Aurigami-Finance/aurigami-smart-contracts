@@ -1,7 +1,7 @@
 {
   "deployer": "0xb969526EBc8dd4b1d816Da846eE08180515fFBbC",
   "unitroller": "0x817af6cfAF35BdC1A634d6cC94eE9e4c68369Aeb",
-  "comptrollerImpl": "0xe2875442E260464f892a61e00aBF1738Ed5Ba318",
+  "comptrollerImpl": "0xa200B567579a577F582d292f7A1b5C4ecce195F8",
   "comptroller": "0x817af6cfAF35BdC1A634d6cC94eE9e4c68369Aeb",
   "PLY": "0x09c9d464b58d96837f8d8b6f4d9fe4ad408d3a4f",
   "jumpRateModel": "0x0Bc03bd8d4aF1e8bab2194860268F5774C9d400a",
@@ -30,5 +30,6 @@
   "multicall": "0x920458b655eF3b93569860Bb6BCbD9acfEEF2C46",
   "referralDirectory": "0x15aD7b9d5Df9F537510f296189BEfb00822ac29A",
   "auriInternalLens": "0x5E9cCF56EB21272E52046A46ba3eE8aDE206e619",
+  "plyGame": "0x60bf668CA101060BD83BD644531a38719586B89f",
   "test": {}
 }

@@ -20,6 +20,7 @@ contract Comptroller is ComptrollerVXStorage, ComptrollerInterface, ExponentialN
     error InvalidCollateralFactor();
     error MarketAlreadyListed();
     error MarketCollateralFactorZero();
+    error AssetNotUsedAsCollateral();
 
     /// @notice Emitted when an admin supports a market
     event MarketListed(AuToken auToken);
@@ -378,6 +379,10 @@ contract Comptroller is ComptrollerVXStorage, ComptrollerInterface, ExponentialN
             revert MarketNotListed();
         }
 
+        if (!markets[auTokenCollateral].accountMembership[borrower]) {
+            revert AssetNotUsedAsCollateral();
+        }
+
         /* The borrower must have shortfall in order to be liquidatable */
         (, uint shortfall) = getAccountLiquidityInternal(borrower);
         if (shortfall == 0) {
@@ -414,6 +419,10 @@ contract Comptroller is ComptrollerVXStorage, ComptrollerInterface, ExponentialN
 
         if (!markets[auTokenCollateral].isListed || !markets[auTokenBorrowed].isListed) {
             revert MarketNotListed();
+        }
+
+        if (!markets[auTokenCollateral].accountMembership[borrower]) {
+            revert AssetNotUsedAsCollateral();
         }
 
         // it will be guaranteed by Governance that comptroller of 2 auTokens are the same
