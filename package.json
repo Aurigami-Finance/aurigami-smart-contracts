@@ -1,6 +1,6 @@
 {
   "name": "@aurigami/smart-contracts",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Aurigami Finance Contracts",
   "main": "hardhat.config.ts",
   "files": [
