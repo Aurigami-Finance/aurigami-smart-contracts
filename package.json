@@ -1,6 +1,6 @@
 {
-  "name": "@aurigami/contracts",
-  "version": "3.12.1",
+  "name": "@aurigami/smart-contracts",
+  "version": "1.0.0",
   "description": "Aurigami Finance Contracts",
   "main": "hardhat.config.ts",
   "files": [
@@ -11,12 +11,10 @@
   ],
   "scripts": {
     "test": "yarn hardhat test",
-    "run": "yarn hardhat run",
     "coverage": "yarn hardhat coverage --testfiles ",
     "test-no-compile": "TS_NODE_TRANSPILE_ONLY=1 yarn hardhat test --no-compile",
     "first-compile": "TS_NODE_TRANSPILE_ONLY=1 yarn hardhat typechain",
     "compile": "yarn hardhat compile",
-    "fcompile": "yarn hardhat clean && yarn hardhat compile",
     "lint:check": "prettier --check '(contracts|interfaces|src|test|deployments)/**/*.(sol|json|ts)'",
     "lint:write": "prettier -w '(contracts|interfaces|src|test|deployments)/**/*.(sol|json|ts)'",
     "format:ts": "prettier -w '(test|deployments|scripts)/**/*.ts'",
@@ -24,57 +22,26 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/aurigami-finance/mainRepo.git"
+    "url": "git+https://github.com/aurigami-finance/aurigami-smart-contracts.git"
   },
   "author": "",
   "license": "AGPL-3.0",
   "bugs": {
-    "url": "https://github.com/aurigami-finance/mainRepo/issues"
+    "url": "https://github.com/aurigami-finance/aurigami-smart-contracts/issues"
   },
-  "homepage": "https://github.com/aurigami-finance/mainRepo#readme",
+  "homepage": "https://github.com/aurigami-finance/aurigami-smart-contracts#readme",
   "dependencies": {
-    "hardhat": "^2.10.1",
-    "node-fetch": "2"
-  },
-  "devDependencies": {
-    "@nomiclabs/hardhat-ethers": "^2.0.3",
-    "@nomiclabs/hardhat-etherscan": "^3.0.3",
-    "@nomiclabs/hardhat-waffle": "^2.0.0",
     "@openzeppelin/contracts": "^4.5.0",
     "@openzeppelin/contracts-upgradeable": "^4.5.2",
-    "@openzeppelin/hardhat-upgrades": "^1.17.0",
     "@typechain/ethers-v5": "^7.0.1",
     "@typechain/hardhat": "^2.3.0",
-    "@types/chai": "^4.2.21",
-    "@types/mocha": "^9.0.0",
-    "@types/node": "^16.4.13",
-    "@typescript-eslint/eslint-plugin": "^4.29.1",
-    "@typescript-eslint/parser": "^4.29.1",
-    "chai": "^4.3.6",
-    "commander": "^8.3.0",
-    "dotenv": "^10.0.0",
-    "eslint": "^7.29.0",
-    "eslint-config-prettier": "^8.3.0",
-    "eslint-config-standard": "^16.0.3",
-    "eslint-plugin-import": "^2.23.4",
-    "eslint-plugin-node": "^11.1.0",
-    "eslint-plugin-prettier": "^3.4.0",
-    "eslint-plugin-promise": "^5.1.0",
-    "ethereum-waffle": "^3.0.0",
-    "ethereumjs-util": "^7.1.3",
-    "ethers": "^5.6.9",
-    "flattener": "^0.4.0",
+    "ethers": "^5.7.2",
+    "hardhat": "^2.12.2",
     "hardhat-contract-sizer": "^2.6.1",
-    "hardhat-gas-reporter": "^1.0.8",
-    "hardhat-storage-layout-diff": "^0.0.4",
-    "prettier": "^2.7.1",
-    "prettier-plugin-solidity": "^1.0.0-beta.24",
-    "solhint": "^3.3.7",
-    "solidity-coverage": "^0.7.21",
     "ts-generator": "^0.1.1",
     "ts-node": "^10.9.1",
-    "typechain": "^8.1.0",
-    "typescript": "^4.7.4"
+    "typechain": "^8.1.1",
+    "typescript": "^4.9.3"
   },
-  "packageManager": "yarn@3.2.1"
+  "packageManager": "yarn@3.3.0"
 }
